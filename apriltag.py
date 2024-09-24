@@ -5,8 +5,12 @@ import os
 import csv
 from scipy.spatial.transform import Rotation as R
 
-def read_video(video_path):
-    return cv2.VideoCapture(video_path)
+camera_matrix = np.array([
+    [889.8569361900343, 0,517.5806962153418 ],
+    [0, 889.3729751599478, 936.4363669536748],
+    [0, 0, 1]
+])
+dist_coeffs = np.array([-0.008400259546985044, -0.010866888062224318, -0.0022880615900283847, -0.0008785960724191664])
 
 def resize_image(image, scale_percent):
     width = int(image.shape[1] * scale_percent / 100)
@@ -14,12 +18,24 @@ def resize_image(image, scale_percent):
     dim = (width, height)
     return cv2.resize(image, dim, interpolation=cv2.INTER_AREA)
 
+def undistort_image(image, camera_matrix, dist_coeffs):
+    # 校正图像
+    undistorted_image = cv2.undistort(
+        src=image,
+        cameraMatrix=camera_matrix,
+        distCoeffs=dist_coeffs,
+    )
+    return undistorted_image
+
+def read_video(video_path):
+    return cv2.VideoCapture(video_path)
+
 def detect_tags(image, at_detector):
     """检测图像中的apriltag"""
     gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     return at_detector.detect(gray_image,
                               estimate_tag_pose=True,
-                              camera_params=[1319.1241542452608, 1324.157436508335, 953.3685395275712, 529.3055372199527],
+                              camera_params=[889.8569361900343, 889.3729751599478, 517.5806962153418, 936.4363669536748],
                               tag_size=0.4)
 
 def draw_detections(image, tags):
@@ -50,9 +66,9 @@ def main(video_path, tag_centers_world, tag_rotation_world, output_csv):
     at_detector = Detector(families='tag25h9',
                            nthreads=4,
                            quad_decimate=1.0,
-                           quad_sigma=0.0,
+                           quad_sigma=0.1,
                            refine_edges=True,
-                           decode_sharpening=0.25,
+                           decode_sharpening=0.5,
                            debug=False)
 
     cap = read_video(video_path)
@@ -62,15 +78,14 @@ def main(video_path, tag_centers_world, tag_rotation_world, output_csv):
         ret, frame = cap.read()
         if not ret:
             break
-         # 缩放图像，这里设定为原来的50%
-        #frame = resize_image(frame, 50)
+        frame = undistort_image(frame,camera_matrix=camera_matrix,dist_coeffs=dist_coeffs)
 
         tags = detect_tags(frame, at_detector)
         camera_coordinates = []
         camera_rotations = []
 
         for tag in tags:
-            if tag.tag_id in tag_centers_world:
+            if tag.tag_id==3:
                 camera_pose = calculate_camera_world_pose(tag_centers_world[tag.tag_id], tag_rotation_world[tag.tag_id], tag.pose_R, tag.pose_t)
                 camera_coordinates.append(camera_pose[0])
                 camera_rotations.append(camera_pose[1])
@@ -91,6 +106,8 @@ def main(video_path, tag_centers_world, tag_rotation_world, output_csv):
 
         # 绘制检测到的标签并展示图像
         image_with_detections = draw_detections(frame, tags)
+        image_with_detections = resize_image(image_with_detections, 50)
+        image_with_detections = cv2.rotate(image_with_detections, cv2.ROTATE_90_COUNTERCLOCKWISE)
         cv2.imshow('Detected Apriltags', image_with_detections)
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
@@ -107,15 +124,15 @@ def main(video_path, tag_centers_world, tag_rotation_world, output_csv):
 if __name__ == "__main__":
     os.add_dll_directory(r'D:\CYF\anaconda\envs\pyzbar_test\Lib\site-packages\pupil_apriltags.libs')
     tag_centers_world = {
-        2: np.array([3.25,0,-3.79]),
+        2: np.array([3.25,0,-3.39]),
         3: np.array([9.3,1.15,-3.5765])
     }
     tag_rotation_world = {
         2: np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]]),  # 2号Tag
         3: np.array([[-1, 0, 0], [0, 1, 0], [0, 0, 1]])  # 3号Tag
     }
-    video_path = './test_video/movie_static_1.mp4'
-    output_csv = 'camera_poses_static.csv'  # 输出CSV文件路径
+    video_path = './test_video/movie_moving.mp4'
+    output_csv = 'camera_poses_moving.csv'  # 输出CSV文件路径
     main(video_path, tag_centers_world, tag_rotation_world, output_csv)
 
    
